@@ -1,0 +1,26 @@
+cask "unfocus@alpha" do
+  arch arm: "aarch64", intel: "x64"
+
+  version "<%= version %>"
+  sha256 arm:   "<%= arm_sha256 %>",
+         intel: "<%= intel_sha256 %>"
+
+  url "https://github.com/abhiksark/unfocus/releases/download/v#{version}/Unfocus_#{version}_#{arch}.dmg"
+  name "Unfocus"
+  desc "Local-first eye-break reminder"
+  homepage "https://github.com/abhiksark/unfocus"
+
+  livecheck do
+    skip "Updates require a verified immutable release dispatch"
+  end
+
+  depends_on :macos
+
+  app "Unfocus.app"
+
+  caveats <<~EOS
+    This alpha is not code-signed or notarized. macOS may block it at launch.
+    Homebrew preserves Apple's quarantine metadata. This cask does not bypass
+    Gatekeeper.
+  EOS
+end

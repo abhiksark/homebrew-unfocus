@@ -1,0 +1,110 @@
+name: Cask CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+
+concurrency:
+  group: cask-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+
+jobs:
+  unit:
+    name: Updater tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - run: ruby script/update_alpha_test.rb
+
+      - name: Reject quarantine removal and Gatekeeper bypasses
+        run: |
+          ruby -e '
+            patterns = /no_quarantine|\bxattr\b|\bspctl\b|com\.apple\.quarantine|--master-disable/
+            paths = ["templates/unfocus@alpha.rb.erb", "Casks/unfocus@alpha.rb"].select { |path| File.file?(path) }
+            matches = paths.select { |path| File.read(path).match?(patterns) }
+            abort("forbidden quarantine or Gatekeeper bypass in #{matches.join(", ")}") unless matches.empty?
+          '
+
+  style:
+    name: Homebrew style and audit
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Style and audit the cask when present
+        run: |
+          set -euo pipefail
+          if [ -f Casks/unfocus@alpha.rb ]; then
+            brew tap abhiksark/unfocus "file://$GITHUB_WORKSPACE"
+            brew style --cask abhiksark/unfocus/unfocus@alpha
+            # This custom tap intentionally ships an unsigned prerelease.
+            # Exclude only the central-admission checks that reject that
+            # distribution model; all other --new audits still run.
+            brew audit --new --cask \
+              --except signing,github_prerelease_version,github_repository \
+              abhiksark/unfocus/unfocus@alpha
+          fi
+
+  install:
+    name: Install (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Detect the cask
+        id: cask
+        run: |
+          if [ -f Casks/unfocus@alpha.rb ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch, verify, install, and stage the app
+        if: steps.cask.outputs.present == 'true'
+        id: install
+        run: |
+          set -euo pipefail
+          brew tap abhiksark/unfocus "file://$GITHUB_WORKSPACE"
+          brew fetch --force --cask abhiksark/unfocus/unfocus@alpha
+          brew install --cask --appdir="$RUNNER_TEMP/Applications" abhiksark/unfocus/unfocus@alpha
+          test -d "$RUNNER_TEMP/Applications/Unfocus.app"
+
+      - name: Uninstall the cask
+        if: always() && steps.install.outcome == 'success'
+        run: brew uninstall --cask abhiksark/unfocus/unfocus@alpha
+
+  required:
+    name: Cask CI
+    if: ${{ always() }}
+    needs: [unit, style, install]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every cask job
+        env:
+          INSTALL_RESULT: ${{ needs.install.result }}
+          STYLE_RESULT: ${{ needs.style.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
+        run: |
+          test "$UNIT_RESULT" = success
+          test "$STYLE_RESULT" = success
+          test "$INSTALL_RESULT" = success
