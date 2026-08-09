@@ -45,6 +45,8 @@ jobs:
           persist-credentials: false
 
       - name: Style and audit the cask when present
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ -f Casks/unfocus@alpha.rb ]; then

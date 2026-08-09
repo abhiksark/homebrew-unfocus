@@ -7,6 +7,7 @@ require "json"
 require "open3"
 require "rbconfig"
 require "tmpdir"
+require "yaml"
 require_relative "update_alpha"
 
 class UpdateAlphaCliTest < Minitest::Test
@@ -19,6 +20,18 @@ class UpdateAlphaCliTest < Minitest::Test
     assert_includes stdout, "--source-repository"
     assert_includes stdout, "--release-json"
     assert_includes stdout, "--assets-dir"
+  end
+end
+
+class CaskCiWorkflowTest < Minitest::Test
+  WORKFLOW = File.expand_path("../.github/workflows/cask-ci.yml", __dir__)
+
+  def test_homebrew_audit_uses_the_read_only_job_token
+    workflow = YAML.safe_load(File.read(WORKFLOW))
+    style_steps = workflow.fetch("jobs").fetch("style").fetch("steps")
+    audit_step = style_steps.find { |step| step["name"] == "Style and audit the cask when present" }
+
+    assert_equal "${{ github.token }}", audit_step.fetch("env", {})["HOMEBREW_GITHUB_API_TOKEN"]
   end
 end
 
