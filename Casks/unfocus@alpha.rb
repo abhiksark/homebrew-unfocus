@@ -1,9 +1,9 @@
 cask "unfocus@alpha" do
   arch arm: "aarch64", intel: "x64"
 
-  version "0.4.0-alpha.1"
-  sha256 arm:   "6777c7862187e809901c65bd75a54c01d6850a1bc2bbf1ccd2a6f92e130f3618",
-         intel: "e003af6814a4b63dcb246121ee6f7fa67d57104e677a89f8ce235a5d60e2e5f0"
+  version "0.5.0-alpha.1"
+  sha256 arm:   "2c1060793c390a1ba028f98a704c1e50b30341e389a86d4c710fe5619452d501",
+         intel: "20f8ccc4d8f5e070b0ab1e52c4b792b958a4328f2b6bb73a3f0d713e81c151ab"
 
   url "https://github.com/abhiksark/unfocus/releases/download/v#{version}/Unfocus_#{version}_#{arch}.dmg"
   name "Unfocus"
