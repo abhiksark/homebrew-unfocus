@@ -25,13 +25,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - run: ruby script/update_alpha_test.rb
+      - run: ruby script/update_cask_test.rb
 
       - name: Reject quarantine removal and Gatekeeper bypasses
         run: |
           ruby -e '
             patterns = /no_quarantine|\bxattr\b|\bspctl\b|com\.apple\.quarantine|--master-disable/
-            paths = ["templates/unfocus@alpha.rb.erb", "Casks/unfocus@alpha.rb"].select { |path| File.file?(path) }
+            paths = Dir["templates/unfocus@*.rb.erb", "Casks/unfocus@*.rb"]
             matches = paths.select { |path| File.read(path).match?(patterns) }
             abort("forbidden quarantine or Gatekeeper bypass in #{matches.join(", ")}") unless matches.empty?
           '
@@ -44,27 +44,30 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Style and audit the cask when present
+      - name: Style and audit casks when present
         env:
           HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [ -f Casks/unfocus@alpha.rb ]; then
-            brew tap abhiksark/unfocus "file://$GITHUB_WORKSPACE"
-            brew style --cask abhiksark/unfocus/unfocus@alpha
+          brew tap abhiksark/unfocus "file://$GITHUB_WORKSPACE"
+          for CHANNEL in alpha beta; do
+            CASK="unfocus@${CHANNEL}"
+            [ -f "Casks/${CASK}.rb" ] || continue
+            brew style --cask "abhiksark/unfocus/${CASK}"
             # This custom tap intentionally ships an unsigned prerelease.
             # Exclude only the central-admission checks that reject that
             # distribution model; all other --new audits still run.
             brew audit --new --cask \
               --except signing,github_prerelease_version,github_repository \
-              abhiksark/unfocus/unfocus@alpha
-          fi
+              "abhiksark/unfocus/${CASK}"
+          done
 
   install:
-    name: Install (${{ matrix.runner }})
+    name: Install (${{ matrix.cask }}, ${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
+        cask: [unfocus@alpha, unfocus@beta]
         runner: [macos-15, macos-15-intel]
     runs-on: ${{ matrix.runner }}
     steps:
@@ -74,8 +77,10 @@ jobs:
 
       - name: Detect the cask
         id: cask
+        env:
+          CASK: ${{ matrix.cask }}
         run: |
-          if [ -f Casks/unfocus@alpha.rb ]; then
+          if [ -f "Casks/${CASK}.rb" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
@@ -84,16 +89,20 @@ jobs:
       - name: Fetch, verify, install, and stage the app
         if: steps.cask.outputs.present == 'true'
         id: install
+        env:
+          CASK: ${{ matrix.cask }}
         run: |
           set -euo pipefail
           brew tap abhiksark/unfocus "file://$GITHUB_WORKSPACE"
-          brew fetch --force --cask abhiksark/unfocus/unfocus@alpha
-          brew install --cask --appdir="$RUNNER_TEMP/Applications" abhiksark/unfocus/unfocus@alpha
+          brew fetch --force --cask "abhiksark/unfocus/${CASK}"
+          brew install --cask --appdir="$RUNNER_TEMP/Applications" "abhiksark/unfocus/${CASK}"
           test -d "$RUNNER_TEMP/Applications/Unfocus.app"
 
       - name: Uninstall the cask
         if: always() && steps.install.outcome == 'success'
-        run: brew uninstall --cask abhiksark/unfocus/unfocus@alpha
+        env:
+          CASK: ${{ matrix.cask }}
+        run: brew uninstall --cask "abhiksark/unfocus/${CASK}"
 
   required:
     name: Cask CI

@@ -1,0 +1,267 @@
+name: Update prerelease cask
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+      payload_release_id:
+        required: false
+        type: string
+        default: ""
+      payload_source_repository:
+        required: false
+        type: string
+        default: ""
+      payload_tag:
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: update-unfocus-${{ inputs.channel }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: macos-15
+    environment: homebrew-tap-automation
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Re-query the release and download its required assets
+        id: release
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAYLOAD_RELEASE_ID: ${{ inputs.payload_release_id }}
+          PAYLOAD_SOURCE_REPOSITORY: ${{ inputs.payload_source_repository }}
+          PAYLOAD_TAG: ${{ inputs.payload_tag }}
+        run: |
+          set -euo pipefail
+
+          case "$CHANNEL" in
+            alpha|beta) ;;
+            *) echo "Channel must be alpha or beta." >&2; exit 1 ;;
+          esac
+          TAG_PATTERN="^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)-${CHANNEL}\\.(0|[1-9][0-9]*)$"
+
+          SOURCE_REPOSITORY=$PAYLOAD_SOURCE_REPOSITORY
+          RELEASE_ID=$PAYLOAD_RELEASE_ID
+          TAG_NAME=$PAYLOAD_TAG
+
+          [ "$SOURCE_REPOSITORY" = abhiksark/unfocus ] || {
+            echo "Unexpected source repository: $SOURCE_REPOSITORY" >&2
+            exit 1
+          }
+          [[ "$RELEASE_ID" =~ ^[0-9]+$ ]] || {
+            echo "Release id must be numeric." >&2
+            exit 1
+          }
+          [[ "$TAG_NAME" =~ $TAG_PATTERN ]] || {
+            echo "Release tag is not an exact $CHANNEL prerelease version." >&2
+            exit 1
+          }
+
+          gh api "repos/$SOURCE_REPOSITORY/releases/$RELEASE_ID" > "$RUNNER_TEMP/release.json"
+          gh api --paginate "repos/$SOURCE_REPOSITORY/releases?per_page=100" \
+            | jq -s 'add' > "$RUNNER_TEMP/releases.json"
+
+          VERSION=${TAG_NAME#v}
+          mkdir -p "$RUNNER_TEMP/unfocus-assets"
+          for NAME in \
+            "Unfocus_${VERSION}_aarch64.dmg" \
+            "Unfocus_${VERSION}_x64.dmg" \
+            SHA256SUMS; do
+            ASSET_ID=$(jq -r --arg name "$NAME" \
+              '[.assets[] | select(.name == $name) | .id] | if length == 1 then .[0] else error("expected exactly one matching asset") end' \
+              "$RUNNER_TEMP/release.json")
+            gh api \
+              -H "Accept: application/octet-stream" \
+              "repos/$SOURCE_REPOSITORY/releases/assets/$ASSET_ID" \
+              > "$RUNNER_TEMP/unfocus-assets/$NAME"
+          done
+
+          {
+            echo "source_repository=$SOURCE_REPOSITORY"
+            echo "release_id=$RELEASE_ID"
+            echo "tag_name=$TAG_NAME"
+            echo "version=$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the release and generate the cask
+        id: update
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+          SOURCE_REPOSITORY: ${{ steps.release.outputs.source_repository }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p Casks
+          ruby script/update_cask.rb \
+            --channel "$CHANNEL" \
+            --source-repository "$SOURCE_REPOSITORY" \
+            --release-id "$RELEASE_ID" \
+            --tag-name "$TAG_NAME" \
+            --release-json "$RUNNER_TEMP/release.json" \
+            --releases-json "$RUNNER_TEMP/releases.json" \
+            --assets-dir "$RUNNER_TEMP/unfocus-assets" \
+            --template "templates/unfocus@${CHANNEL}.rb.erb" \
+            --output "Casks/unfocus@${CHANNEL}.rb" \
+            --metadata "$RUNNER_TEMP/update.json"
+          {
+            echo "changed=$(jq -r .changed "$RUNNER_TEMP/update.json")"
+            echo "arm_name=$(jq -r .assets.arm.name "$RUNNER_TEMP/update.json")"
+            echo "arm_sha256=$(jq -r .assets.arm.sha256 "$RUNNER_TEMP/update.json")"
+            echo "intel_name=$(jq -r .assets.intel.name "$RUNNER_TEMP/update.json")"
+            echo "intel_sha256=$(jq -r .assets.intel.sha256 "$RUNNER_TEMP/update.json")"
+            echo "release_url=$(jq -r .release_url "$RUNNER_TEMP/update.json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Confirm both disk images contain Unfocus.app
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          for ARCH in aarch64 x64; do
+            DMG="$RUNNER_TEMP/unfocus-assets/Unfocus_${VERSION}_${ARCH}.dmg"
+            CONVERTED="$RUNNER_TEMP/Unfocus_${VERSION}_${ARCH}.cdr"
+            MOUNT_POINT=$(mktemp -d)
+            # The release DMG presents its MIT license as a disk-image SLA.
+            # Convert it as Homebrew does so CI can inspect the app without
+            # accepting that agreement interactively.
+            hdiutil convert -quiet -format UDTO -o "$CONVERTED" "$DMG"
+            hdiutil attach "$CONVERTED" -readonly -nobrowse -mountpoint "$MOUNT_POINT"
+            if [ ! -d "$MOUNT_POINT/Unfocus.app" ]; then
+              hdiutil detach "$MOUNT_POINT"
+              echo "$DMG does not contain Unfocus.app at its root." >&2
+              exit 1
+            fi
+            hdiutil detach "$MOUNT_POINT"
+            rmdir "$MOUNT_POINT"
+          done
+
+      - name: Reject quarantine removal and Gatekeeper bypasses
+        run: |
+          ruby -e '
+            patterns = /no_quarantine|\bxattr\b|\bspctl\b|com\.apple\.quarantine|--master-disable/
+            paths = Dir["Casks/unfocus@*.rb", "templates/unfocus@*.rb.erb"]
+            matches = paths.select { |path| File.read(path).match?(patterns) }
+            abort("forbidden quarantine or Gatekeeper bypass in #{matches.join(", ")}") unless matches.empty?
+          '
+
+      - name: Check for an existing automation branch
+        if: steps.update.outputs.changed == 'true'
+        id: branch
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          CASK_PATH="Casks/unfocus@${CHANNEL}.rb"
+          BRANCH="automation/unfocus-${CHANNEL}-$VERSION"
+          REMOTE_REF="refs/remotes/origin/unfocus-${CHANNEL}-update"
+          if git ls-remote --exit-code --heads origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+            git fetch --no-tags origin "refs/heads/$BRANCH:$REMOTE_REF"
+            git show "$REMOTE_REF:$CASK_PATH" > "$RUNNER_TEMP/remote-cask.rb"
+            cmp -s "$CASK_PATH" "$RUNNER_TEMP/remote-cask.rb" || {
+              echo "$BRANCH already exists with different cask content." >&2
+              exit 1
+            }
+            BRANCH_EXISTS=true
+          else
+            BRANCH_EXISTS=false
+          fi
+          {
+            echo "name=$BRANCH"
+            echo "exists=$BRANCH_EXISTS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Mint a tap-only GitHub App token
+        if: steps.update.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: abhiksark
+          permission-contents: write
+          permission-pull-requests: write
+          repositories: homebrew-unfocus
+
+      - name: Push the automation branch
+        if: steps.update.outputs.changed == 'true' && steps.branch.outputs.exists == 'false'
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs['app-slug'] }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+          git add -- "Casks/unfocus@${CHANNEL}.rb"
+          git diff --cached --quiet && {
+            echo "Updater reported a change but produced no cask diff." >&2
+            exit 1
+          }
+          git commit -m "Update unfocus $CHANNEL to $VERSION"
+          git push \
+            "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            "HEAD:refs/heads/$BRANCH"
+
+      - name: Open or recover the update pull request
+        if: steps.update.outputs.changed == 'true'
+        env:
+          ARM_NAME: ${{ steps.update.outputs.arm_name }}
+          ARM_SHA256: ${{ steps.update.outputs.arm_sha256 }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          CHANNEL: ${{ inputs.channel }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          INTEL_NAME: ${{ steps.update.outputs.intel_name }}
+          INTEL_SHA256: ${{ steps.update.outputs.intel_sha256 }}
+          RELEASE_URL: ${{ steps.update.outputs.release_url }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          PRS=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state all --limit 10 --json state,url)
+          COUNT=$(jq length <<<"$PRS")
+          if [ "$COUNT" -gt 1 ]; then
+            echo "Multiple pull requests already exist for $BRANCH." >&2
+            exit 1
+          fi
+          if [ "$COUNT" -eq 1 ]; then
+            STATE=$(jq -r '.[0].state' <<<"$PRS")
+            URL=$(jq -r '.[0].url' <<<"$PRS")
+            [ "$STATE" = OPEN ] || {
+              echo "$URL is $STATE; refusing to replace or reopen it automatically." >&2
+              exit 1
+            }
+            echo "Existing update pull request: $URL"
+            exit 0
+          fi
+
+          {
+            echo "Automated $CHANNEL cask update for [Unfocus $VERSION]($RELEASE_URL)."
+            echo
+            echo "Verified release artifacts:"
+            echo
+            echo "- \`$ARM_NAME\`: \`$ARM_SHA256\`"
+            echo "- \`$INTEL_NAME\`: \`$INTEL_SHA256\`"
+            echo
+            echo "The updater matched both GitHub asset digests and SHA256SUMS, then confirmed both disk images contain Unfocus.app."
+          } > "$RUNNER_TEMP/pr-body.md"
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "$BRANCH" \
+            --title "Update unfocus $CHANNEL to $VERSION" \
+            --body-file "$RUNNER_TEMP/pr-body.md"

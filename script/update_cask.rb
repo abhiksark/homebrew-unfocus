@@ -8,8 +8,9 @@ require "json"
 require "tempfile"
 require "time"
 
-module UnfocusAlpha
+module UnfocusCask
   EXPECTED_REPOSITORY = "abhiksark/unfocus"
+  CHANNELS = %w[alpha beta].freeze
 
   class Error < StandardError
   end
@@ -40,6 +41,12 @@ module UnfocusAlpha
 
     def prerelease?
       !@prerelease.empty?
+    end
+
+    def channel_prerelease?(channel)
+      @prerelease.length == 2 &&
+        @prerelease.first == channel &&
+        @prerelease.last.match?(/\A(?:0|[1-9]\d*)\z/)
     end
 
     def <=>(other)
@@ -108,6 +115,7 @@ module UnfocusAlpha
 
       metadata = {
         "changed" => changed,
+        "channel" => @options.fetch(:channel),
         "version" => version.to_s,
         "tag_name" => tag_name,
         "release_id" => verified.fetch(:release_id),
@@ -134,8 +142,12 @@ module UnfocusAlpha
       raise Error, "existing cask must contain exactly one version" unless matches.length == 1
 
       current_version = SemVer.parse(matches.first.first)
+      channel = @options.fetch(:channel)
+      unless current_version.channel_prerelease?(channel)
+        raise Error, "existing cask is not an exact #{channel} prerelease"
+      end
       if current_version > version
-        raise Error, "refusing to downgrade unfocus@alpha from #{current_version} to #{version}"
+        raise Error, "refusing to downgrade unfocus@#{channel} from #{current_version} to #{version}"
       end
       if current_version == version
         raise Error, "same-version cask differs from the verified release" unless current == rendered
@@ -209,8 +221,15 @@ module UnfocusAlpha
       tag_name = @options.fetch(:tag_name)
       raise Error, "release tag must start with v" unless tag_name.start_with?("v")
 
-      version = SemVer.parse(tag_name.delete_prefix("v"))
-      raise Error, "stable releases cannot update unfocus@alpha" unless version.prerelease?
+      channel = @options.fetch(:channel)
+      begin
+        version = SemVer.parse(tag_name.delete_prefix("v"))
+      rescue ArgumentError
+        raise Error, "release tag must be an exact #{channel} prerelease (vX.Y.Z-#{channel}.N)"
+      end
+      unless version.channel_prerelease?(channel)
+        raise Error, "release tag must be an exact #{channel} prerelease (vX.Y.Z-#{channel}.N)"
+      end
       raise Error, "release is still a draft" unless @release["draft"] == false
       raise Error, "release is not a prerelease" unless @release["prerelease"] == true
       raise Error, "release is not immutable" unless @release["immutable"] == true
@@ -224,21 +243,32 @@ module UnfocusAlpha
 
     def verify_newest_release
       releases = normalize_release_pages(@releases)
+      channel = @options.fetch(:channel)
       published_prereleases = releases.each_with_object([]) do |release, result|
         next unless release["draft"] == false && release["prerelease"] == true
+        next unless release_channel_version(release)&.channel_prerelease?(channel)
 
         published_at = release["published_at"]
         raise Error, "a published prerelease has no publication timestamp" unless published_at.is_a?(String) && !published_at.empty?
 
         result << [Time.iso8601(published_at), release]
       end
-      raise Error, "GitHub returned no published prereleases" if published_prereleases.empty?
+      raise Error, "GitHub returned no published #{channel} prereleases" if published_prereleases.empty?
 
       newest_time = published_prereleases.map(&:first).max
       newest = published_prereleases.select { |published_at, _release| published_at == newest_time }.map(&:last)
       unless newest.length == 1 && newest.first["id"] == @release["id"] && newest.first["tag_name"] == @release["tag_name"]
-        raise Error, "dispatch tag is not the newest published prerelease"
+        raise Error, "dispatch tag is not the newest published #{channel} prerelease"
       end
+    end
+
+    def release_channel_version(release)
+      tag_name = release["tag_name"]
+      return nil unless tag_name.is_a?(String) && tag_name.start_with?("v")
+
+      SemVer.parse(tag_name.delete_prefix("v"))
+    rescue ArgumentError
+      nil
     end
 
     def normalize_release_pages(value)
@@ -316,7 +346,8 @@ module UnfocusAlpha
   def self.parse_options(arguments)
     options = {}
     parser = OptionParser.new do |definition|
-      definition.banner = "Usage: update_alpha.rb [options]"
+      definition.banner = "Usage: update_cask.rb [options]"
+      definition.on("--channel CHANNEL") { |value| options[:channel] = value }
       definition.on("--source-repository REPOSITORY") { |value| options[:source_repository] = value }
       definition.on("--release-id ID") { |value| options[:release_id] = value }
       definition.on("--tag-name TAG") { |value| options[:tag_name] = value }
@@ -329,7 +360,11 @@ module UnfocusAlpha
     end
     parser.parse!(arguments)
 
-    required = %i[source_repository release_id tag_name release_json releases_json assets_dir template output metadata]
+    if options.key?(:channel) && !CHANNELS.include?(options[:channel])
+      raise Error, "channel must be alpha or beta"
+    end
+
+    required = %i[channel source_repository release_id tag_name release_json releases_json assets_dir template output metadata]
     missing = required.reject { |name| options.key?(name) }
     raise Error, "missing required options: #{missing.join(", ")}" unless missing.empty?
 
@@ -339,8 +374,8 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    UnfocusAlpha::Updater.new(UnfocusAlpha.parse_options(ARGV)).run
-  rescue UnfocusAlpha::Error, ArgumentError, JSON::ParserError, KeyError, Errno::ENOENT => error
+    UnfocusCask::Updater.new(UnfocusCask.parse_options(ARGV)).run
+  rescue UnfocusCask::Error, ArgumentError, JSON::ParserError, KeyError, Errno::ENOENT => error
     warn error.message
     exit 1
   end
