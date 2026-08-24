@@ -1,9 +1,9 @@
-cask "unfocus@alpha" do
+cask "unfocus@beta" do
   arch arm: "aarch64", intel: "x64"
 
-  version "0.5.0-alpha.1"
-  sha256 arm:   "2c1060793c390a1ba028f98a704c1e50b30341e389a86d4c710fe5619452d501",
-         intel: "20f8ccc4d8f5e070b0ab1e52c4b792b958a4328f2b6bb73a3f0d713e81c151ab"
+  version "<%= version %>"
+  sha256 arm:   "<%= arm_sha256 %>",
+         intel: "<%= intel_sha256 %>"
 
   url "https://github.com/abhiksark/unfocus/releases/download/v#{version}/Unfocus_#{version}_#{arch}.dmg"
   name "Unfocus"
@@ -14,13 +14,13 @@ cask "unfocus@alpha" do
     skip "Updates require a verified immutable release dispatch"
   end
 
-  conflicts_with cask: "unfocus@beta"
-  depends_on :macos
+  conflicts_with cask: "unfocus@alpha"
+  depends_on macos: :big_sur
 
   app "Unfocus.app"
 
   caveats <<~EOS
-    This alpha is not code-signed or notarized. macOS may block it at launch.
+    This beta is not code-signed or notarized. macOS may block it at launch.
     Homebrew preserves Apple's quarantine metadata. This cask does not bypass
     Gatekeeper.
   EOS

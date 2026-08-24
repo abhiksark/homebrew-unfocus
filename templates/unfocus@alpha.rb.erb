@@ -14,6 +14,7 @@ cask "unfocus@alpha" do
     skip "Updates require a verified immutable release dispatch"
   end
 
+  conflicts_with cask: "unfocus@beta"
   depends_on :macos
 
   app "Unfocus.app"
