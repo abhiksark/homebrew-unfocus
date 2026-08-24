@@ -64,7 +64,7 @@ pass normal Gatekeeper launch; progress is tracked in
 ## Automation
 
 Published alpha and beta releases dispatch separate events. The shared updater
-accepts only exact `X.Y.Z-<channel>.N` tags, requires a published immutable
+accepts only exact `vX.Y.Z-<channel>.N` tags, requires a published immutable
 prerelease, selects the newest published release within that channel, verifies
 both architecture digests and `SHA256SUMS`, and opens a reviewable automation
 pull request. The beta cask is generated only after the first beta release is

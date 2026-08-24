@@ -15,4 +15,3 @@ jobs:
       payload_release_id: ${{ format('{0}', github.event.client_payload.release_id || '') }}
       payload_source_repository: ${{ github.event.client_payload.source_repository || '' }}
       payload_tag: ${{ github.event.client_payload.tag_name || '' }}
-    secrets: inherit

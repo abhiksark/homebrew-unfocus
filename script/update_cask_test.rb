@@ -49,6 +49,7 @@ class UpdateWorkflowContractTest < Minitest::Test
     "beta" => File.expand_path("../.github/workflows/update-beta.yml", __dir__)
   }.freeze
   SHARED_WORKFLOW = File.expand_path("../.github/workflows/update-channel.yml", __dir__)
+  README = File.expand_path("../README.md", __dir__)
 
   def test_channel_workflows_accept_only_the_guarded_source_dispatch
     WORKFLOWS.each do |channel, path|
@@ -69,6 +70,7 @@ class UpdateWorkflowContractTest < Minitest::Test
         workflow.fetch("jobs").fetch("update").fetch("with"),
         channel
       )
+      refute workflow.fetch("jobs").fetch("update").key?("secrets"), channel
     end
   end
 
@@ -80,6 +82,13 @@ class UpdateWorkflowContractTest < Minitest::Test
       %w[channel payload_release_id payload_source_repository payload_tag],
       inputs.keys.sort
     )
+  end
+
+  def test_documents_the_exact_guarded_source_tag_contract
+    contents = File.read(README)
+
+    assert_includes contents, "exact `vX.Y.Z-<channel>.N` tags"
+    assert_includes contents, "the tap does not accept direct manual update runs"
   end
 end
 
