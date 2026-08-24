@@ -70,7 +70,14 @@ class UpdateWorkflowContractTest < Minitest::Test
         workflow.fetch("jobs").fetch("update").fetch("with"),
         channel
       )
-      refute workflow.fetch("jobs").fetch("update").key?("secrets"), channel
+    end
+  end
+
+  def test_channel_workflows_inherit_the_protected_automation_secrets
+    WORKFLOWS.each do |channel, path|
+      workflow = YAML.safe_load(File.read(path))
+
+      assert_equal "inherit", workflow.fetch("jobs").fetch("update")["secrets"], channel
     end
   end
 
