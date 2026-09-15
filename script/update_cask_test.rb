@@ -188,6 +188,14 @@ class UpdateCaskIntegrationTest < Minitest::Test
         depends_on macos: :big_sur
 
         app "Unfocus.app"
+
+        caveats <<~EOS
+          This pre-1.x release is ad-hoc signed, not Developer ID-signed or notarized.
+          macOS may block it at launch. Homebrew preserves Apple's quarantine metadata.
+          Apple signing and notarization are deferred until 1.x.
+          Review the first-launch instructions before opening the app:
+            https://github.com/abhiksark/unfocus/blob/main/docs/install.md#first-launch-ad-hoc-signed--not-notarized
+        EOS
       end
     RUBY
   }.freeze
@@ -699,5 +707,29 @@ class UpdateCaskLibraryTest < Minitest::Test
     assert_operator UnfocusCask::SemVer.parse("0.1.0-alpha.beta"), :>, alpha_one
     assert_operator UnfocusCask::SemVer.parse("0.1.0"), :>, UnfocusCask::SemVer.parse("0.1.0-alpha.beta")
     assert_operator UnfocusCask::SemVer.parse("0.2.0-alpha.1"), :>, UnfocusCask::SemVer.parse("0.1.9")
+  end
+end
+
+class PreOneSigningPolicyTest < Minitest::Test
+  def test_only_pre_one_stable_exempts_signing_audit
+    require_relative "audit_cask"
+    ["0.7.0", "0.99.0"].each do |version|
+      args = UnfocusAudit.arguments("stable", version)
+      assert_equal "signing", args[args.index("--except") + 1]
+    end
+    ["1.0.0", "2.0.0", "10.0.0"].each do |version|
+      refute_includes UnfocusAudit.arguments("stable", version), "--except"
+    end
+    assert_raises(ArgumentError) { UnfocusAudit.arguments("stable", "garbage") }
+    assert_raises(ArgumentError) { UnfocusAudit.arguments("stable", "0.7.0-beta.1") }
+  end
+
+  def test_stable_template_warns_only_for_pre_one
+    template = ERB.new(File.read(File.expand_path("../templates/unfocus.rb.erb", __dir__)), trim_mode: "-")
+    ["0.7.0", "1.0.0"].each do |version|
+      rendered = template.result_with_hash(version: version, arm_sha256: "a" * 64, intel_sha256: "b" * 64)
+      assert_equal version.start_with?("0."), rendered.include?("caveats")
+      refute_match(/no_quarantine|\bxattr\b|\bspctl\b|com\.apple\.quarantine/, rendered)
+    end
   end
 end

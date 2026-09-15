@@ -31,7 +31,8 @@ cask.
 
 ## Security model
 
-These prerelease builds are not code-signed or notarized. macOS Gatekeeper may
+Pre-1.x builds, including stable releases, are ad-hoc signed but not
+Developer ID-signed or notarized. Apple enrollment is deferred until 1.x. macOS Gatekeeper may
 block the app at launch, and installing a cask does not establish the
 publisher's identity. Homebrew preserves Apple's quarantine metadata; this tap
 does not remove quarantine or bypass Gatekeeper. If you are not comfortable
@@ -56,9 +57,10 @@ brew upgrade --cask abhiksark/unfocus/unfocus@beta
 brew uninstall --cask abhiksark/unfocus/unfocus@beta
 ```
 
-The tap adds no updater or application runtime network behavior. A stable
-`unfocus` cask will be considered only after signed and notarized artifacts
-pass normal Gatekeeper launch; progress is tracked in
+The tap adds no updater or application runtime network behavior. The stable
+`unfocus` cask can ship verified pre-1.x ad-hoc packages after release validation.
+It retains installation warnings and quarantine metadata. Stable 1.x and later
+releases require Developer ID signing and notarization; progress is tracked in
 [Unfocus issue #26](https://github.com/abhiksark/unfocus/issues/26).
 
 ## Automation

@@ -18,4 +18,14 @@ cask "unfocus" do
   depends_on macos: :big_sur
 
   app "Unfocus.app"
+<% if version.to_s.start_with?("0.") -%>
+
+  caveats <<~EOS
+    This pre-1.x release is ad-hoc signed, not Developer ID-signed or notarized.
+    macOS may block it at launch. Homebrew preserves Apple's quarantine metadata.
+    Apple signing and notarization are deferred until 1.x.
+    Review the first-launch instructions before opening the app:
+      https://github.com/abhiksark/unfocus/blob/main/docs/install.md#first-launch-ad-hoc-signed--not-notarized
+  EOS
+<% end -%>
 end

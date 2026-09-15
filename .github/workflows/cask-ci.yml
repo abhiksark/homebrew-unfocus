@@ -54,14 +54,7 @@ jobs:
             CASK=$( [ "$CHANNEL" = stable ] && echo unfocus || echo "unfocus@${CHANNEL}" )
             [ -f "Casks/${CASK}.rb" ] || continue
             brew style --cask "abhiksark/unfocus/${CASK}"
-            if [ "$CHANNEL" = stable ]; then
-              brew audit --new --cask "abhiksark/unfocus/${CASK}"
-            else
-              # This custom tap intentionally ships an unsigned prerelease.
-              brew audit --new --cask \
-                --except signing,github_prerelease_version,github_repository \
-                "abhiksark/unfocus/${CASK}"
-            fi
+            ruby script/audit_cask.rb "$CHANNEL" "Casks/${CASK}.rb"
           done
 
   install:
