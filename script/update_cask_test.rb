@@ -715,10 +715,11 @@ class PreOneSigningPolicyTest < Minitest::Test
     require_relative "audit_cask"
     ["0.7.0", "0.99.0"].each do |version|
       args = UnfocusAudit.arguments("stable", version)
-      assert_equal "signing", args[args.index("--except") + 1]
+      assert_equal "signing,github_repository", args[args.index("--except") + 1]
     end
     ["1.0.0", "2.0.0", "10.0.0"].each do |version|
-      refute_includes UnfocusAudit.arguments("stable", version), "--except"
+      args = UnfocusAudit.arguments("stable", version)
+      assert_equal "github_repository", args[args.index("--except") + 1]
     end
     assert_raises(ArgumentError) { UnfocusAudit.arguments("stable", "garbage") }
     assert_raises(ArgumentError) { UnfocusAudit.arguments("stable", "0.7.0-beta.1") }

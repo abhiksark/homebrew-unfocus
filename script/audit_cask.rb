@@ -9,11 +9,15 @@ module UnfocusAudit
     parsed = UnfocusCask::SemVer.parse(version)
     raise ArgumentError, "stable cask must use a stable version" if channel == "stable" && parsed.prerelease?
 
+    # This maintainer-owned tap does not use homebrew/cask popularity admission.
+    # Keep archived-repository and artifact audits; 1.x still requires signing.
     args = ["audit", "--new", "--cask"]
     if channel != "stable"
       args += ["--except", "signing,github_prerelease_version,github_repository"]
     elsif version.start_with?("0.")
-      args += ["--except", "signing"]
+      args += ["--except", "signing,github_repository"]
+    else
+      args += ["--except", "github_repository"]
     end
     args + ["abhiksark/unfocus/#{channel == 'stable' ? 'unfocus' : "unfocus@#{channel}"}"]
   end
