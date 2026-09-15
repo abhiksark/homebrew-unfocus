@@ -1,8 +1,8 @@
 # Homebrew tap for Unfocus
 
-This tap distributes Unfocus prereleases through explicit channels. New
-prereleases use `unfocus@beta`; `unfocus@alpha` remains frozen at
-`0.5.0-alpha.1` for existing users. There is no stable `unfocus` cask yet.
+This tap distributes Unfocus through explicit channels. Prereleases use
+`unfocus@beta`; `unfocus@alpha` remains frozen at `0.5.0-alpha.1`. The stable
+`unfocus` cask is generated only after a validated stable release is published.
 
 The `@beta` token follows Homebrew's
 [alternative release channel convention](https://docs.brew.sh/Acceptable-Casks#default-and-alternative-release-channels).
@@ -63,13 +63,15 @@ pass normal Gatekeeper launch; progress is tracked in
 
 ## Automation
 
-Published alpha and beta releases dispatch separate events. The shared updater
-accepts only exact `vX.Y.Z-<channel>.N` tags, requires a published immutable
-prerelease, selects the newest published release within that channel, verifies
+Published alpha, beta, and stable releases dispatch separate events. The shared
+updater accepts exact channel tag forms (`vX.Y.Z-alpha.N`, `vX.Y.Z-beta.N`, or
+`vX.Y.Z`), requires the matching published immutable release state, selects the
+newest published release within that channel, verifies
 both architecture digests and `SHA256SUMS`, and opens a reviewable automation
 pull request. The beta cask is generated only after the first beta release is
 published. First publish and recovery runs must start from the guarded
-`Dispatch Homebrew alpha update` or `Dispatch Homebrew beta update` workflow
+`Dispatch Homebrew alpha update`, `Dispatch Homebrew beta update`, or
+`Dispatch Homebrew stable update` workflow
 in `abhiksark/unfocus`; the tap does not accept direct manual update runs.
 Redispatching an identical verified release recovers an interrupted update
 idempotently.

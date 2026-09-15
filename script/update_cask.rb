@@ -10,7 +10,7 @@ require "time"
 
 module UnfocusCask
   EXPECTED_REPOSITORY = "abhiksark/unfocus"
-  CHANNELS = %w[alpha beta].freeze
+  CHANNELS = %w[alpha beta stable].freeze
 
   class Error < StandardError
   end
@@ -143,11 +143,13 @@ module UnfocusCask
 
       current_version = SemVer.parse(matches.first.first)
       channel = @options.fetch(:channel)
-      unless current_version.channel_prerelease?(channel)
-        raise Error, "existing cask is not an exact #{channel} prerelease"
+      valid_current = channel == "stable" ? !current_version.prerelease? : current_version.channel_prerelease?(channel)
+      unless valid_current
+        raise Error, "existing cask is not an exact #{channel} version"
       end
       if current_version > version
-        raise Error, "refusing to downgrade unfocus@#{channel} from #{current_version} to #{version}"
+        cask_name = channel == "stable" ? "unfocus" : "unfocus@#{channel}"
+        raise Error, "refusing to downgrade #{cask_name} from #{current_version} to #{version}"
       end
       if current_version == version
         raise Error, "same-version cask differs from the verified release" unless current == rendered
@@ -222,16 +224,17 @@ module UnfocusCask
       raise Error, "release tag must start with v" unless tag_name.start_with?("v")
 
       channel = @options.fetch(:channel)
+      format = channel == "stable" ? "vX.Y.Z" : "vX.Y.Z-#{channel}.N"
       begin
         version = SemVer.parse(tag_name.delete_prefix("v"))
       rescue ArgumentError
-        raise Error, "release tag must be an exact #{channel} prerelease (vX.Y.Z-#{channel}.N)"
+        raise Error, "release tag must be an exact #{channel} version (#{format})"
       end
-      unless version.channel_prerelease?(channel)
-        raise Error, "release tag must be an exact #{channel} prerelease (vX.Y.Z-#{channel}.N)"
-      end
+      exact_channel = channel == "stable" ? !version.prerelease? : version.channel_prerelease?(channel)
+      raise Error, "release tag must be an exact #{channel} version (#{format})" unless exact_channel
       raise Error, "release is still a draft" unless @release["draft"] == false
-      raise Error, "release is not a prerelease" unless @release["prerelease"] == true
+      expected_prerelease = channel != "stable"
+      raise Error, "release prerelease state does not match #{channel}" unless @release["prerelease"] == expected_prerelease
       raise Error, "release is not immutable" unless @release["immutable"] == true
 
       published_at = @release["published_at"]
@@ -244,21 +247,25 @@ module UnfocusCask
     def verify_newest_release
       releases = normalize_release_pages(@releases)
       channel = @options.fetch(:channel)
-      published_prereleases = releases.each_with_object([]) do |release, result|
-        next unless release["draft"] == false && release["prerelease"] == true
-        next unless release_channel_version(release)&.channel_prerelease?(channel)
+      published_releases = releases.each_with_object([]) do |release, result|
+        next unless release["draft"] == false
+        release_version = release_channel_version(release)
+        next unless release_version
+        channel_match = channel == "stable" ? (!release_version.prerelease? && release["prerelease"] == false) :
+          (release_version.channel_prerelease?(channel) && release["prerelease"] == true)
+        next unless channel_match
 
         published_at = release["published_at"]
         raise Error, "a published prerelease has no publication timestamp" unless published_at.is_a?(String) && !published_at.empty?
 
         result << [Time.iso8601(published_at), release]
       end
-      raise Error, "GitHub returned no published #{channel} prereleases" if published_prereleases.empty?
+      raise Error, "GitHub returned no published #{channel} releases" if published_releases.empty?
 
-      newest_time = published_prereleases.map(&:first).max
-      newest = published_prereleases.select { |published_at, _release| published_at == newest_time }.map(&:last)
+      newest_time = published_releases.map(&:first).max
+      newest = published_releases.select { |published_at, _release| published_at == newest_time }.map(&:last)
       unless newest.length == 1 && newest.first["id"] == @release["id"] && newest.first["tag_name"] == @release["tag_name"]
-        raise Error, "dispatch tag is not the newest published #{channel} prerelease"
+        raise Error, "dispatch tag is not the newest published #{channel} release"
       end
     end
 
@@ -361,7 +368,7 @@ module UnfocusCask
     parser.parse!(arguments)
 
     if options.key?(:channel) && !CHANNELS.include?(options[:channel])
-      raise Error, "channel must be alpha or beta"
+      raise Error, "channel must be alpha, beta, or stable"
     end
 
     required = %i[channel source_repository release_id tag_name release_json releases_json assets_dir template output metadata]

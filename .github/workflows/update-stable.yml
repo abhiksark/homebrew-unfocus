@@ -1,0 +1,18 @@
+name: Update stable cask
+
+on:
+  repository_dispatch:
+    types: [unfocus-stable-published]
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    uses: ./.github/workflows/update-channel.yml
+    secrets: inherit
+    with:
+      channel: stable
+      payload_release_id: ${{ format('{0}', github.event.client_payload.release_id || '') }}
+      payload_source_repository: ${{ github.event.client_payload.source_repository || '' }}
+      payload_tag: ${{ github.event.client_payload.tag_name || '' }}

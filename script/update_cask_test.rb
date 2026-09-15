@@ -24,10 +24,10 @@ class UpdateCaskCliTest < Minitest::Test
   end
 
   def test_rejects_an_unsupported_channel
-    _stdout, stderr, status = Open3.capture3(RbConfig.ruby, SCRIPT, "--channel", "stable")
+    _stdout, stderr, status = Open3.capture3(RbConfig.ruby, SCRIPT, "--channel", "nightly")
 
     refute status.success?
-    assert_includes stderr, "channel must be alpha or beta"
+    assert_includes stderr, "channel must be alpha, beta, or stable"
   end
 end
 
@@ -46,7 +46,8 @@ end
 class UpdateWorkflowContractTest < Minitest::Test
   WORKFLOWS = {
     "alpha" => File.expand_path("../.github/workflows/update-alpha.yml", __dir__),
-    "beta" => File.expand_path("../.github/workflows/update-beta.yml", __dir__)
+    "beta" => File.expand_path("../.github/workflows/update-beta.yml", __dir__),
+    "stable" => File.expand_path("../.github/workflows/update-stable.yml", __dir__)
   }.freeze
   SHARED_WORKFLOW = File.expand_path("../.github/workflows/update-channel.yml", __dir__)
   README = File.expand_path("../README.md", __dir__)
@@ -94,7 +95,7 @@ class UpdateWorkflowContractTest < Minitest::Test
   def test_documents_the_exact_guarded_source_tag_contract
     contents = File.read(README)
 
-    assert_includes contents, "exact `vX.Y.Z-<channel>.N` tags"
+    assert_includes contents, "exact channel tag forms"
     assert_includes contents, "the tap does not accept direct manual update runs"
   end
 end
@@ -104,7 +105,8 @@ class UpdateCaskIntegrationTest < Minitest::Test
   SOURCE_REPOSITORY = "abhiksark/unfocus"
   TEMPLATES = {
     "alpha" => File.expand_path("../templates/unfocus@alpha.rb.erb", __dir__),
-    "beta" => File.expand_path("../templates/unfocus@beta.rb.erb", __dir__)
+    "beta" => File.expand_path("../templates/unfocus@beta.rb.erb", __dir__),
+    "stable" => File.expand_path("../templates/unfocus.rb.erb", __dir__)
   }.freeze
   EXPECTED_CASKS = {
     "alpha" => <<~RUBY,
@@ -136,7 +138,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
         EOS
       end
     RUBY
-    "beta" => <<~RUBY
+    "beta" => <<~RUBY,
       cask "unfocus@beta" do
         arch arm: "aarch64", intel: "x64"
 
@@ -165,6 +167,29 @@ class UpdateCaskIntegrationTest < Minitest::Test
         EOS
       end
     RUBY
+    "stable" => <<~RUBY
+      cask "unfocus" do
+        arch arm: "aarch64", intel: "x64"
+
+        version "0.1.0"
+        sha256 arm:   "8df572ae6ed716037eaf81fcb41147c1bf7c3f6f3826d53f91e12720273858bc",
+               intel: "19f894fda737d93eea010da8697027181bad5b73035306361e75bdeb1b51701b"
+
+        url "https://github.com/abhiksark/unfocus/releases/download/v\#{version}/Unfocus_\#{version}_\#{arch}.dmg"
+        name "Unfocus"
+        desc "Local-first eye-break reminder"
+        homepage "https://github.com/abhiksark/unfocus"
+
+        livecheck do
+          skip "Updates require a verified immutable release dispatch"
+        end
+
+        conflicts_with cask: ["unfocus@alpha", "unfocus@beta"]
+        depends_on macos: :big_sur
+
+        app "Unfocus.app"
+      end
+    RUBY
   }.freeze
 
   def test_generates_each_channel_cask_and_metadata_from_verified_release_artifacts
@@ -185,6 +210,53 @@ class UpdateCaskIntegrationTest < Minitest::Test
         assert_equal EXPECTED_CASKS.fetch(channel), File.read(output)
         assert_equal expected_metadata(channel), JSON.parse(File.read(metadata))
       end
+    end
+  end
+
+  def test_generates_stable_cask_from_published_immutable_non_prerelease
+    Dir.mktmpdir do |directory|
+      fixture = write_release_fixture(directory, channel: "stable")
+      output = File.join(directory, "unfocus.rb")
+      _stdout, stderr, status = run_updater(
+        fixture: fixture, output: output, metadata: File.join(directory, "metadata.json"), channel: "stable"
+      )
+
+      assert status.success?, stderr
+      assert_equal EXPECTED_CASKS.fetch("stable"), File.read(output)
+      assert_equal expected_metadata("stable"), JSON.parse(File.read(File.join(directory, "metadata.json")))
+    end
+  end
+
+  def test_stable_rejects_prerelease_wrong_channel_and_mutable_release
+    [
+      ["beta", {}, "exact stable version"],
+      ["stable", { "prerelease" => true }, "prerelease state"],
+      ["stable", { "immutable" => false }, "immutable"]
+    ].each do |channel, overrides, message|
+      Dir.mktmpdir do |directory|
+        fixture = write_release_fixture(directory, channel: channel, release_overrides: overrides)
+        assert_rejected(fixture, "stable", message, tag_name: fixture.fetch(:release).fetch("tag_name"))
+      end
+    end
+  end
+
+  def test_stable_rejects_downgrade_and_same_version_different_bytes
+    Dir.mktmpdir do |directory|
+      fixture = write_release_fixture(directory, channel: "stable")
+      output = File.join(directory, "unfocus.rb")
+      existing = EXPECTED_CASKS.fetch("stable").sub('version "0.1.0"', 'version "0.2.0"')
+      File.write(output, existing)
+      assert_rejected(fixture, "stable", "refusing to downgrade unfocus", output: output)
+      assert_equal existing, File.read(output)
+    end
+
+    Dir.mktmpdir do |directory|
+      fixture = write_release_fixture(directory, channel: "stable")
+      output = File.join(directory, "unfocus.rb")
+      existing = EXPECTED_CASKS.fetch("stable").sub(/8df572ae[0-9a-f]+/, "0" * 64)
+      File.write(output, existing)
+      assert_rejected(fixture, "stable", "same-version cask differs", output: output)
+      assert_equal existing, File.read(output)
     end
   end
 
@@ -216,7 +288,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
           fixture = write_release_fixture(directory, channel: channel)
           fixture.fetch(:release)["tag_name"] = tag_name
           rewrite_release_fixture(fixture)
-          assert_rejected(fixture, channel, "exact #{channel} prerelease", tag_name: tag_name)
+          assert_rejected(fixture, channel, "exact #{channel} version", tag_name: tag_name)
         end
       end
     end
@@ -249,7 +321,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
         )
         File.write(fixture.fetch(:releases_json), JSON.generate([fixture.fetch(:release), newer]))
 
-        assert_rejected(fixture, channel, "newest published #{channel} prerelease")
+        assert_rejected(fixture, channel, "newest published #{channel} release")
       end
     end
   end
@@ -472,7 +544,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
   end
 
   def expected_metadata(channel)
-    version = "0.1.0-#{channel}.1"
+    version = version_for(channel)
     {
       "changed" => true,
       "channel" => channel,
@@ -493,9 +565,10 @@ class UpdateCaskIntegrationTest < Minitest::Test
     }
   end
 
-  def assert_rejected(fixture, channel, expected_message, **arguments)
+  def assert_rejected(fixture, channel, expected_message, output: nil, **arguments)
     directory = File.dirname(fixture.fetch(:release_json))
-    output = File.join(directory, "rejected.rb")
+    output ||= File.join(directory, "rejected.rb")
+    output_existed = File.exist?(output)
     metadata = File.join(directory, "rejected.json")
     stdout, stderr, status = run_updater(
       fixture: fixture,
@@ -507,7 +580,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
 
     refute status.success?, stdout
     assert_includes stderr, expected_message
-    refute File.exist?(output), "the cask was written before validation failed"
+    refute File.exist?(output), "the cask was written before validation failed" unless output_existed
     refute File.exist?(metadata), "metadata was written before validation failed"
   end
 
@@ -520,7 +593,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
     release_id: 101,
     tag_name: nil
   )
-    tag_name ||= "v0.1.0-#{channel}.1"
+    tag_name ||= "v#{version_for(channel)}"
     Open3.capture3(
       RbConfig.ruby,
       SCRIPT,
@@ -540,7 +613,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
   def write_release_fixture(directory, channel:, release_overrides: {}, releases: nil)
     assets_dir = File.join(directory, "assets")
     FileUtils.mkdir_p(assets_dir)
-    version = "0.1.0-#{channel}.1"
+    version = version_for(channel)
     arm_name = "Unfocus_#{version}_aarch64.dmg"
     intel_name = "Unfocus_#{version}_x64.dmg"
     File.binwrite(File.join(assets_dir, arm_name), "arm-dmg")
@@ -554,7 +627,7 @@ class UpdateCaskIntegrationTest < Minitest::Test
       "id" => 101,
       "tag_name" => "v#{version}",
       "draft" => false,
-      "prerelease" => true,
+      "prerelease" => channel != "stable",
       "immutable" => true,
       "published_at" => "2026-08-07T09:47:52Z",
       "assets" => [
@@ -589,6 +662,10 @@ class UpdateCaskIntegrationTest < Minitest::Test
       "state" => "uploaded",
       "digest" => "sha256:#{sha256}"
     }
+  end
+
+  def version_for(channel)
+    channel == "stable" ? "0.1.0" : "0.1.0-#{channel}.1"
   end
 end
 
