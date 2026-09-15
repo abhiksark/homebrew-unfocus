@@ -1,0 +1,31 @@
+cask "unfocus" do
+  arch arm: "aarch64", intel: "x64"
+
+  version "<%= version %>"
+  sha256 arm:   "<%= arm_sha256 %>",
+         intel: "<%= intel_sha256 %>"
+
+  url "https://github.com/abhiksark/unfocus/releases/download/v#{version}/Unfocus_#{version}_#{arch}.dmg"
+  name "Unfocus"
+  desc "Local-first eye-break reminder"
+  homepage "https://github.com/abhiksark/unfocus"
+
+  livecheck do
+    skip "Updates require a verified immutable release dispatch"
+  end
+
+  conflicts_with cask: ["unfocus@alpha", "unfocus@beta"]
+  depends_on macos: :big_sur
+
+  app "Unfocus.app"
+<% if version.to_s.start_with?("0.") -%>
+
+  caveats <<~EOS
+    This pre-1.x release is ad-hoc signed, not Developer ID-signed or notarized.
+    macOS may block it at launch. Homebrew preserves Apple's quarantine metadata.
+    Apple signing and notarization are deferred until 1.x.
+    Review the first-launch instructions before opening the app:
+      https://github.com/abhiksark/unfocus/blob/main/docs/install.md#first-launch-ad-hoc-signed--not-notarized
+  EOS
+<% end -%>
+end
